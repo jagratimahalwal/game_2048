@@ -5,18 +5,46 @@ type Direction = "UP" | "DOWN" | "LEFT" | "RIGHT";
 type Board = number[][];
 
 const GRID_SIZE = 4;
-const INITIAL_TILES = 2;
+
+const createEmptyBoard = (): Board =>
+  Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
+
+const cloneBoard = (board: Board): Board => board.map((row) => [...row]);
+
+const getEmptyCells = (board: Board): [number, number][] => {
+  const emptyCells: [number, number][] = [];
+  board.forEach((row, i) =>
+    row.forEach((cell, j) => {
+      if (cell === 0) emptyCells.push([i, j]);
+    })
+  );
+  return emptyCells;
+};
+
+const addRandomTile = (board: Board): void => {
+  const emptyCells = getEmptyCells(board);
+  if (emptyCells.length === 0) return;
+  const [i, j] = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+  board[i][j] = Math.random() < 0.9 ? 2 : 4;
+};
+
+const rotateBoard = (board: Board, times: number): Board => {
+  let result = cloneBoard(board);
+  for (let t = 0; t < times; t++) {
+    result = result[0].map((_, colIndex) =>
+      result.map((row) => row[colIndex]).reverse()
+    );
+  }
+  return result;
+};
 
 const Game2048 = () => {
-  const [board, setBoard] = useState<Board>([]);
+  const [board, setBoard] = useState<Board>(createEmptyBoard());
   const [score, setScore] = useState(0);
   const [gameOver, setGameOver] = useState(false);
 
-  // Initialize the board
   const initializeBoard = useCallback(() => {
-    const newBoard: Board = Array(GRID_SIZE)
-      .fill(null)
-      .map(() => Array(GRID_SIZE).fill(0));
+    const newBoard = createEmptyBoard();
     addRandomTile(newBoard);
     addRandomTile(newBoard);
     setBoard(newBoard);
@@ -24,94 +52,9 @@ const Game2048 = () => {
     setGameOver(false);
   }, []);
 
-  // Add a random tile (2 or 4) to the board
-  const addRandomTile = (currentBoard: Board) => {
-    const emptyCells: [number, number][] = [];
-    currentBoard.forEach((row, i) => {
-      row.forEach((cell, j) => {
-        if (cell === 0) {
-          emptyCells.push([i, j]);
-        }
-      });
-    });
+  const checkGameOver = useCallback((currentBoard: Board) => {
+    if (getEmptyCells(currentBoard).length > 0) return false;
 
-    if (emptyCells.length > 0) {
-      const [i, j] = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-      currentBoard[i][j] = Math.random() < 0.9 ? 2 : 4;
-    }
-  };
-
-  // Move tiles in the specified direction
-  const moveTiles = (direction: Direction) => {
-    if (gameOver) return;
-
-    const newBoard = JSON.parse(JSON.stringify(board));
-    let moved = false;
-    let newScore = score;
-
-    const rotateBoard = (board: Board, times: number) => {
-      for (let t = 0; t < times; t++) {
-        const rotated: Board = Array(GRID_SIZE)
-          .fill(null)
-          .map(() => Array(GRID_SIZE).fill(0));
-        for (let i = 0; i < GRID_SIZE; i++) {
-          for (let j = 0; j < GRID_SIZE; j++) {
-            rotated[i][j] = board[GRID_SIZE - 1 - j][i];
-          }
-        }
-        board.splice(0, board.length, ...rotated);
-      }
-    };
-
-    // Rotate board to handle all directions as left movement
-    const rotations = {
-      LEFT: 0,
-      UP: 1,
-      RIGHT: 2,
-      DOWN: 3,
-    }[direction];
-
-    rotateBoard(newBoard, rotations);
-
-    // Move and merge tiles
-    for (let i = 0; i < GRID_SIZE; i++) {
-      const row = newBoard[i].filter((cell) => cell !== 0);
-      for (let j = 0; j < row.length - 1; j++) {
-        if (row[j] === row[j + 1]) {
-          row[j] *= 2;
-          newScore += row[j];
-          row.splice(j + 1, 1);
-          moved = true;
-        }
-      }
-      const newRow = row.concat(Array(GRID_SIZE - row.length).fill(0));
-      if (newRow.join(",") !== newBoard[i].join(",")) {
-        moved = true;
-      }
-      newBoard[i] = newRow;
-    }
-
-    // Rotate back
-    rotateBoard(newBoard, (4 - rotations) % 4);
-
-    if (moved) {
-      addRandomTile(newBoard);
-      setBoard(newBoard);
-      setScore(newScore);
-      checkGameOver(newBoard);
-    }
-  };
-
-  // Check if the game is over
-  const checkGameOver = (currentBoard: Board) => {
-    // Check for empty cells
-    for (let i = 0; i < GRID_SIZE; i++) {
-      for (let j = 0; j < GRID_SIZE; j++) {
-        if (currentBoard[i][j] === 0) return;
-      }
-    }
-
-    // Check for possible merges
     for (let i = 0; i < GRID_SIZE; i++) {
       for (let j = 0; j < GRID_SIZE; j++) {
         const current = currentBoard[i][j];
@@ -119,45 +62,84 @@ const Game2048 = () => {
           (i < GRID_SIZE - 1 && current === currentBoard[i + 1][j]) ||
           (j < GRID_SIZE - 1 && current === currentBoard[i][j + 1])
         ) {
-          return;
+          return false;
         }
       }
     }
 
-    setGameOver(true);
-  };
+    return true;
+  }, []);
 
-  // Handle keyboard events
+  const moveTiles = useCallback(
+    (direction: Direction) => {
+      if (gameOver) return;
+
+      const directionToRotations: Record<Direction, number> = {
+        LEFT: 0,
+        UP: 3,
+        RIGHT: 2,
+        DOWN: 1,
+      };
+
+      const rotated = rotateBoard(board, directionToRotations[direction]);
+      let moved = false;
+      let newScore = score;
+
+      const newBoard: Board = rotated.map((row) => {
+        const nonZero = row.filter((val) => val !== 0);
+        for (let i = 0; i < nonZero.length - 1; i++) {
+          if (nonZero[i] === nonZero[i + 1]) {
+            nonZero[i] *= 2;
+            newScore += nonZero[i];
+            nonZero.splice(i + 1, 1);
+          }
+        }
+        const newRow = [
+          ...nonZero,
+          ...Array(GRID_SIZE - nonZero.length).fill(0),
+        ];
+        if (newRow.toString() !== row.toString()) moved = true;
+        return newRow;
+      });
+
+      const finalBoard = rotateBoard(
+        newBoard,
+        (4 - directionToRotations[direction]) % 4
+      );
+
+      if (moved) {
+        addRandomTile(finalBoard);
+        setBoard(finalBoard);
+        setScore(newScore);
+        if (checkGameOver(finalBoard)) setGameOver(true);
+      }
+    },
+    [board, score, gameOver, checkGameOver]
+  );
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      switch (event.key) {
-        case "ArrowUp":
-          moveTiles("UP");
-          break;
-        case "ArrowDown":
-          moveTiles("DOWN");
-          break;
-        case "ArrowLeft":
-          moveTiles("LEFT");
-          break;
-        case "ArrowRight":
-          moveTiles("RIGHT");
-          break;
-      }
+      const keyToDirection: Record<string, Direction> = {
+        ArrowUp: "UP",
+        ArrowDown: "DOWN",
+        ArrowLeft: "LEFT",
+        ArrowRight: "RIGHT",
+      };
+      const direction = keyToDirection[event.key];
+      if (direction) moveTiles(direction);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [board, gameOver]);
+  }, [moveTiles]);
 
-  // Initialize the game
   useEffect(() => {
     initializeBoard();
   }, [initializeBoard]);
 
   return (
     <div className="game-container">
-      <div className="header">
+      <header className="header">
         <h1>2048</h1>
         <div className="score-container">
           <div className="score">Score: {score}</div>
@@ -165,8 +147,9 @@ const Game2048 = () => {
             New Game
           </button>
         </div>
-      </div>
-      <div className="game-board">
+      </header>
+
+      <main className="game-board">
         {board.map((row, i) => (
           <div key={i} className="row">
             {row.map((cell, j) => (
@@ -176,7 +159,8 @@ const Game2048 = () => {
             ))}
           </div>
         ))}
-      </div>
+      </main>
+
       {gameOver && (
         <div className="game-over">
           <h2>Game Over!</h2>
